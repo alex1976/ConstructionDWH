@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pyodbc
+import psycopg2
+import psycopg2.extensions
 from openpyxl import load_workbook
 
 
@@ -33,93 +34,96 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--connection-string",
         default=os.getenv("DWH_CONN_STR"),
-        help="ODBC connection string (or set DWH_CONN_STR)",
+        help="PostgreSQL connection string, e.g. 'postgresql://user:password@localhost:5432/ConstructionDWH' "
+             "(or set DWH_CONN_STR)",
     )
     parser.add_argument("--schema", default="dwh", help="Target schema name")
     parser.add_argument("--dry-run", action="store_true", help="Validate and resolve keys without inserting data")
     return parser.parse_args()
 
 
-def scalar(cursor: pyodbc.Cursor, sql: str, params: tuple[Any, ...] = ()) -> Any:
-    row = cursor.execute(sql, params).fetchone()
+def scalar(cursor: psycopg2.extensions.cursor, sql: str, params: tuple[Any, ...] = ()) -> Any:
+    cursor.execute(sql, params)
+    row = cursor.fetchone()
     return row[0] if row else None
 
 
-def table_exists(cursor: pyodbc.Cursor, schema: str, table: str) -> bool:
+def table_exists(cursor: psycopg2.extensions.cursor, schema: str, table: str) -> bool:
     sql = """
     SELECT COUNT(1)
-    FROM INFORMATION_SCHEMA.TABLES
-    WHERE TABLE_SCHEMA = ?
-      AND TABLE_NAME = ?
+    FROM information_schema.tables
+    WHERE lower(table_schema) = lower(%s)
+      AND lower(table_name) = lower(%s)
     """
     return int(scalar(cursor, sql, (schema, table)) or 0) > 0
 
 
-def column_exists(cursor: pyodbc.Cursor, schema: str, table: str, column: str) -> bool:
+def column_exists(cursor: psycopg2.extensions.cursor, schema: str, table: str, column: str) -> bool:
     sql = """
     SELECT COUNT(1)
-    FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = ?
-      AND TABLE_NAME = ?
-      AND COLUMN_NAME = ?
+    FROM information_schema.columns
+    WHERE lower(table_schema) = lower(%s)
+      AND lower(table_name) = lower(%s)
+      AND lower(column_name) = lower(%s)
     """
     return int(scalar(cursor, sql, (schema, table, column)) or 0) > 0
 
 
-def resolve_dim_key(cursor: pyodbc.Cursor, schema: str, table: str, key_col: str, bk_col: str, bk_value: Any) -> int:
+def resolve_dim_key(cursor: psycopg2.extensions.cursor, schema: str, table: str, key_col: str, bk_col: str, bk_value: Any) -> int:
     if bk_value in (None, ""):
         return UNKNOWN_KEY
-    sql = f"SELECT TOP 1 {key_col} FROM {schema}.{table} WHERE {bk_col} = ?"
+    sql = f"SELECT {key_col} FROM {schema}.{table} WHERE {bk_col} = %s LIMIT 1"
     key = scalar(cursor, sql, (bk_value,))
     return int(key) if key is not None else UNKNOWN_KEY
 
 
-def resolve_date_key(cursor: pyodbc.Cursor, schema: str, date_key: Any) -> int:
+def resolve_date_key(cursor: psycopg2.extensions.cursor, schema: str, date_key: Any) -> int:
     if date_key in (None, ""):
         return UNKNOWN_KEY
-    sql = f"SELECT TOP 1 DateKey FROM {schema}.DimDate WHERE DateKey = ?"
+    sql = f"SELECT DateKey FROM {schema}.DimDate WHERE DateKey = %s LIMIT 1"
     key = scalar(cursor, sql, (int(date_key),))
     return int(key) if key is not None else UNKNOWN_KEY
 
 
-def create_audit_row(cursor: pyodbc.Cursor, schema: str, source_system: str) -> int | None:
+def create_audit_row(cursor: psycopg2.extensions.cursor, schema: str, source_system: str) -> int | None:
     if not table_exists(cursor, schema, "DimAudit"):
         return None
 
     sql = f"""
     INSERT INTO {schema}.DimAudit (BatchId, SourceSystem, LoadStartDtm, LoadStatus)
-    OUTPUT inserted.AuditKey
-    VALUES (?, ?, SYSDATETIME(), ?)
+    VALUES (%s, %s, now(), %s)
+    RETURNING AuditKey
     """
     batch_id = f"excel_{source_system}"
-    row = cursor.execute(sql, (batch_id, source_system, "RUNNING")).fetchone()
+    cursor.execute(sql, (batch_id, source_system, "RUNNING"))
+    row = cursor.fetchone()
     return int(row[0]) if row else None
 
 
-def complete_audit_row(cursor: pyodbc.Cursor, schema: str, audit_key: int, rows_read: int, rows_inserted: int) -> None:
+def complete_audit_row(cursor: psycopg2.extensions.cursor, schema: str, audit_key: int, rows_read: int, rows_inserted: int) -> None:
     sql = f"""
     UPDATE {schema}.DimAudit
-    SET LoadEndDtm = SYSDATETIME(),
+    SET LoadEndDtm = now(),
         LoadStatus = 'SUCCESS',
-        RowsRead = ?,
-        RowsInserted = ?
-    WHERE AuditKey = ?
+        RowsRead = %s,
+        RowsInserted = %s
+    WHERE AuditKey = %s
     """
     cursor.execute(sql, (rows_read, rows_inserted, audit_key))
 
 
-def fail_audit_row(cursor: pyodbc.Cursor, schema: str, audit_key: int, error_message: str) -> None:
+def fail_audit_row(cursor: psycopg2.extensions.cursor, schema: str, audit_key: int, error_message: str) -> None:
     sql = f"""
     UPDATE {schema}.DimAudit
-    SET LoadEndDtm = SYSDATETIME(),
+    SET LoadEndDtm = now(),
         LoadStatus = 'FAILED',
-        ErrorMessage = ?
-    WHERE AuditKey = ?
+        ErrorMessage = %s
+    WHERE AuditKey = %s
     """
     cursor.execute(sql, (error_message[:2000], audit_key))
 
 
-def load_fact_file(cursor: pyodbc.Cursor, schema: str, excel_path: Path, config: FactConfig, dry_run: bool) -> tuple[int, int]:
+def load_fact_file(cursor: psycopg2.extensions.cursor, schema: str, excel_path: Path, config: FactConfig, dry_run: bool) -> tuple[int, int]:
     workbook = load_workbook(excel_path, data_only=True)
     sheet = workbook.active
     header_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
@@ -184,7 +188,7 @@ def load_fact_file(cursor: pyodbc.Cursor, schema: str, excel_path: Path, config:
                 INSERT INTO {schema}.{config.fact_table}
                 (ProjectKey, WBSKey, DateKey, ResourceKey, CustomerKey, SupplierKey, ProductKey, AuditKey,
                  DocumentNumber, DocumentLineNumber, Quantity, {config.hours_column}, {config.cost_column}, {config.revenue_column})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 cursor.execute(
                     insert_sql,
@@ -211,7 +215,7 @@ def load_fact_file(cursor: pyodbc.Cursor, schema: str, excel_path: Path, config:
                 INSERT INTO {schema}.{config.fact_table}
                 (ProjectKey, WBSKey, DateKey, ResourceKey, CustomerKey, SupplierKey, ProductKey,
                  Quantity, {config.hours_column}, {config.cost_column}, {config.revenue_column}, SourceSystem)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 cursor.execute(
                     insert_sql,
@@ -250,7 +254,7 @@ def main() -> None:
         raise ValueError("Connection string is required. Use --connection-string or set DWH_CONN_STR.")
 
     excel_dir = Path(args.excel_dir).resolve()
-    conn = pyodbc.connect(args.connection_string)
+    conn = psycopg2.connect(args.connection_string)
 
     try:
         cursor = conn.cursor()

@@ -50,10 +50,10 @@ The first row is a sample row you can overwrite.
 
 ### 5) Configure database connection
 
-Set an ODBC connection string in an environment variable:
+Set a PostgreSQL connection string in an environment variable:
 
 ```powershell
-$env:DWH_CONN_STR = "Driver={ODBC Driver 17 for SQL Server};Server=localhost;Database=ConstructionDWH;Trusted_Connection=yes;"
+$env:DWH_CONN_STR = "postgresql://postgres:postgres@localhost:5432/ConstructionDWH"
 ```
 
 Or pass `--connection-string` directly when running the loader.
@@ -94,6 +94,6 @@ If a lookup does not match, the loader uses `-1` (unknown member).
 
 ## Notes
 
-- Ensure unknown members (`-1`) exist in dimensions (already included in `construction_dwh_kimball_v2.sql`).
+- Ensure unknown members (`-1`) exist in dimensions (already included in `construction_dwh_v2.sql`).
 - If `DimAudit`/`AuditKey` are present, the loader writes audit status automatically.
 - You can change the schema with `--schema`.

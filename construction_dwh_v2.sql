@@ -327,15 +327,6 @@ VALUES (
 INSERT INTO dwh.DimAudit (AuditKey, BatchId, SourceSystem, LoadStartDtm, LoadEndDtm, LoadStatus, RowsRead, RowsInserted, RowsUpdated, ErrorMessage)
 VALUES (-1, 'UNK', 'System', (now() AT TIME ZONE 'utc'), (now() AT TIME ZONE 'utc'), 'Unknown', NULL, NULL, NULL, NULL);
 
-/* Keep the identity sequences ahead of the manually inserted -1 unknown-member keys */
-SELECT setval(pg_get_serial_sequence('dwh.DimProject', 'projectkey'), 1, false);
-SELECT setval(pg_get_serial_sequence('dwh.DimWBS', 'wbskey'), 1, false);
-SELECT setval(pg_get_serial_sequence('dwh.DimResource', 'resourcekey'), 1, false);
-SELECT setval(pg_get_serial_sequence('dwh.DimCustomer', 'customerkey'), 1, false);
-SELECT setval(pg_get_serial_sequence('dwh.DimSupplier', 'supplierkey'), 1, false);
-SELECT setval(pg_get_serial_sequence('dwh.DimProduct', 'productkey'), 1, false);
-SELECT setval(pg_get_serial_sequence('dwh.DimAudit', 'auditkey'), 1, false);
-
 /* =========================
    DATE DIMENSION POPULATION
    ========================= */

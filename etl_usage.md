@@ -25,10 +25,10 @@ Keep these columns in each file:
 
 ## 4) Load into DWH
 
-Set your ODBC connection string in `DWH_CONN_STR` or pass it directly.
+Set your PostgreSQL connection string in `DWH_CONN_STR` or pass it directly.
 
 ```powershell
-$env:DWH_CONN_STR = "Driver={ODBC Driver 17 for SQL Server};Server=localhost;Database=ConstructionDWH;Trusted_Connection=yes;"
+$env:DWH_CONN_STR = "postgresql://postgres:postgres@localhost:5432/ConstructionDWH"
 python load_excel_to_dwh.py --excel-dir . --schema dwh
 ```
 

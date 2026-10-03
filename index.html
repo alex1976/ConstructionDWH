@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Construction DWH – Excel to Warehouse</title>
+<style>
+  :root {
+    --bg: #f5f7fa; --card: #fff; --ink: #1d2733; --muted: #5b6b7c;
+    --primary: #1f5fa8; --planned: #2e7d32; --committed: #ef8f00; --actual: #c62828;
+    --line: #dde3ea;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--ink); line-height: 1.55; }
+  header { background: linear-gradient(135deg, #14406f, #1f5fa8); color: #fff; padding: 56px 24px; text-align: center; }
+  header h1 { margin: 0 0 8px; font-size: 2.2rem; }
+  header p { margin: 0 auto; max-width: 720px; opacity: .92; }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 20px 64px; }
+  h2 { margin: 48px 0 16px; font-size: 1.5rem; border-left: 5px solid var(--primary); padding-left: 12px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  .card h3 { margin: 0 0 6px; font-size: 1.05rem; }
+  .card p { margin: 0; color: var(--muted); font-size: .93rem; }
+  code { background: #eaeff5; padding: 1px 6px; border-radius: 4px; font-family: Consolas, monospace; font-size: .88em; }
+  pre { background: #12202f; color: #e6edf5; padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: .88rem; margin: 10px 0 0; }
+  .fact-tag { display: inline-block; color: #fff; font-weight: 600; font-size: .78rem; padding: 2px 10px; border-radius: 999px; margin-bottom: 8px; }
+  .planned { background: var(--planned); } .committed { background: var(--committed); } .actual { background: var(--actual); }
+  .steps { list-style: none; counter-reset: s; padding: 0; margin: 0; }
+  .steps li { counter-increment: s; position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px 16px 62px; margin-bottom: 12px; }
+  .steps li::before { content: counter(s); position: absolute; left: 16px; top: 16px; width: 32px; height: 32px; border-radius: 50%; background: var(--primary); color: #fff; display: grid; place-items: center; font-weight: 700; }
+  .steps h3 { margin: 0 0 4px; font-size: 1.02rem; }
+  .steps p { margin: 0; color: var(--muted); font-size: .93rem; }
+  .diagram { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .diagram svg { width: 100%; height: auto; display: block; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: .93rem; }
+  th { background: #eaeff5; }
+  tr:last-child td { border-bottom: 0; }
+  .cols { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .cols span { background: #eaeff5; border-radius: 6px; padding: 3px 9px; font-family: Consolas, monospace; font-size: .82rem; }
+  .note { background: #fff8e6; border: 1px solid #f1d88a; border-radius: 10px; padding: 14px 18px; }
+  .note ul { margin: 6px 0 0; padding-left: 20px; }
+  footer { text-align: center; color: var(--muted); font-size: .85rem; padding: 24px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Construction DWH</h1>
+  <p>Data Warehouse per il controllo di gestione di commessa, con un flusso ETL in Python che carica
+     dati <strong>Pianificati</strong>, <strong>Impegnati</strong> e <strong>Consuntivi</strong> da file Excel verso PostgreSQL.</p>
+</header>
+
+<main>
+
+  <h2>Cosa contiene il progetto</h2>
+  <div class="grid">
+    <div class="card"><h3>Schema SQL</h3><p><code>construction_dwh.sql</code> e <code>construction_dwh_v2.sql</code> (modello Kimball con membri sconosciuti <code>-1</code>).</p></div>
+    <div class="card"><h3>Generatore template</h3><p><code>create_excel_templates.py</code> crea <code>Planned.xlsx</code>, <code>Committed.xlsx</code> e <code>Actual.xlsx</code>.</p></div>
+    <div class="card"><h3>Loader ETL</h3><p><code>load_excel_to_dwh.py</code> risolve le chiavi di business e inserisce nelle tabelle dei fatti.</p></div>
+    <div class="card"><h3>Dipendenze</h3><p><code>requirements.txt</code> – installazione con <code>pip install -r requirements.txt</code>.</p></div>
+  </div>
+
+  <h2>Architettura del flusso</h2>
+  <div class="diagram">
+    <svg viewBox="0 0 960 230" role="img" aria-label="Flusso: template Excel, loader Python, DWH PostgreSQL">
+      <defs>
+        <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#5b6b7c"/>
+        </marker>
+      </defs>
+      <!-- Excel -->
+      <g font-family="Segoe UI, sans-serif" font-size="14">
+        <rect x="10" y="20" width="170" height="52" rx="8" fill="#2e7d32"/>
+        <text x="95" y="51" fill="#fff" text-anchor="middle">Planned.xlsx</text>
+        <rect x="10" y="88" width="170" height="52" rx="8" fill="#ef8f00"/>
+        <text x="95" y="119" fill="#fff" text-anchor="middle">Committed.xlsx</text>
+        <rect x="10" y="156" width="170" height="52" rx="8" fill="#c62828"/>
+        <text x="95" y="187" fill="#fff" text-anchor="middle">Actual.xlsx</text>
+
+        <path d="M180 46 L300 100" stroke="#5b6b7c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+        <path d="M180 114 L300 114" stroke="#5b6b7c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+        <path d="M180 182 L300 128" stroke="#5b6b7c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+
+        <!-- Loader -->
+        <rect x="300" y="64" width="230" height="100" rx="10" fill="#1f5fa8"/>
+        <text x="415" y="102" fill="#fff" text-anchor="middle" font-weight="700">load_excel_to_dwh.py</text>
+        <text x="415" y="126" fill="#cfe1f5" text-anchor="middle" font-size="12">BK → chiavi surrogate</text>
+        <text x="415" y="146" fill="#cfe1f5" text-anchor="middle" font-size="12">dry-run · audit · fallback -1</text>
+
+        <path d="M530 114 L640 114" stroke="#5b6b7c" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+
+        <!-- DWH -->
+        <rect x="640" y="14" width="310" height="202" rx="10" fill="#fff" stroke="#1f5fa8" stroke-width="2"/>
+        <text x="795" y="40" text-anchor="middle" font-weight="700" fill="#1f5fa8">PostgreSQL – schema dwh</text>
+        <g font-size="13">
+          <rect x="656" y="54" width="130" height="30" rx="6" fill="#2e7d32"/><text x="721" y="74" fill="#fff" text-anchor="middle">FactPlanned</text>
+          <rect x="656" y="92" width="130" height="30" rx="6" fill="#ef8f00"/><text x="721" y="112" fill="#fff" text-anchor="middle">FactCommitted</text>
+          <rect x="656" y="130" width="130" height="30" rx="6" fill="#c62828"/><text x="721" y="150" fill="#fff" text-anchor="middle">FactActual</text>
+          <text x="721" y="188" text-anchor="middle" fill="#5b6b7c" font-size="12">+ DimAudit</text>
+          <rect x="806" y="54" width="130" height="24" rx="5" fill="#eaeff5"/><text x="871" y="71" text-anchor="middle">DimProject</text>
+          <rect x="806" y="84" width="130" height="24" rx="5" fill="#eaeff5"/><text x="871" y="101" text-anchor="middle">DimWBS</text>
+          <rect x="806" y="114" width="130" height="24" rx="5" fill="#eaeff5"/><text x="871" y="131" text-anchor="middle">DimResource</text>
+          <rect x="806" y="144" width="130" height="24" rx="5" fill="#eaeff5"/><text x="871" y="161" text-anchor="middle">Customer · Supplier</text>
+          <rect x="806" y="174" width="130" height="24" rx="5" fill="#eaeff5"/><text x="871" y="191" text-anchor="middle">Product · Date</text>
+        </g>
+      </g>
+    </svg>
+  </div>
+
+  <h2>Le tre tabelle dei fatti</h2>
+  <div class="grid">
+    <div class="card"><span class="fact-tag planned">Planned</span><h3>dwh.FactPlanned</h3><p>Valori di budget / pianificazione per WBS, risorsa e periodo.</p></div>
+    <div class="card"><span class="fact-tag committed">Committed</span><h3>dwh.FactCommitted</h3><p>Ordinato e impegni verso fornitori.</p></div>
+    <div class="card"><span class="fact-tag actual">Actual</span><h3>dwh.FactActual</h3><p>Consuntivo: costi e ricavi effettivamente sostenuti.</p></div>
+  </div>
+
+  <h2>Processo end-to-end</h2>
+  <ol class="steps">
+    <li>
+      <h3>Crea lo schema del Data Warehouse</h3>
+      <p>Esegui uno degli script SQL nel database (schema consigliato: <code>dwh</code>). Il loader supporta la nomenclatura Kimball (<code>DimDate</code>, <code>DimWBS</code>, <code>ProjectBK</code>…).</p>
+    </li>
+    <li>
+      <h3>Installa le dipendenze Python</h3>
+      <pre>pip install -r requirements.txt</pre>
+    </li>
+    <li>
+      <h3>Genera i template Excel</h3>
+      <pre>python create_excel_templates.py</pre>
+      <p>Produce <code>Planned.xlsx</code>, <code>Committed.xlsx</code>, <code>Actual.xlsx</code>.</p>
+    </li>
+    <li>
+      <h3>Compila i file Excel</h3>
+      <p>Ogni file deve mantenere queste colonne (la prima riga è un esempio sovrascrivibile):</p>
+      <div class="cols">
+        <span>ProjectBK</span><span>WBSBK</span><span>DateKey</span><span>ResourceBK</span><span>CustomerBK</span><span>SupplierBK</span><span>ProductBK</span>
+        <span>DocumentNumber</span><span>DocumentLineNumber</span><span>Quantity</span><span>Hours</span><span>Cost</span><span>Revenue</span><span>SourceSystem</span>
+      </div>
+    </li>
+    <li>
+      <h3>Configura la connessione al database</h3>
+      <pre>$env:DWH_CONN_STR = "postgresql://postgres:postgres@localhost:5432/ConstructionDWH"</pre>
+      <p>In alternativa usa l'opzione <code>--connection-string</code>.</p>
+    </li>
+    <li>
+      <h3>Valida con un dry run (consigliato)</h3>
+      <pre>python load_excel_to_dwh.py --excel-dir . --schema dwh --dry-run</pre>
+      <p>Controlla file e risoluzione delle chiavi senza inserire righe.</p>
+    </li>
+    <li>
+      <h3>Carica i dati nelle tabelle dei fatti</h3>
+      <pre>python load_excel_to_dwh.py --excel-dir . --schema dwh</pre>
+    </li>
+  </ol>
+
+  <h2>Risoluzione delle chiavi</h2>
+  <p>Per ogni riga il loader trasforma le business key in chiavi surrogate:</p>
+  <table>
+    <thead><tr><th>Colonna Excel</th><th>Lookup nel DWH</th></tr></thead>
+    <tbody>
+      <tr><td><code>ProjectBK</code></td><td><code>DimProject.ProjectBK</code></td></tr>
+      <tr><td><code>WBSBK</code></td><td><code>DimWBS.WBSBK</code></td></tr>
+      <tr><td><code>ResourceBK</code></td><td><code>DimResource.ResourceBK</code></td></tr>
+      <tr><td><code>CustomerBK</code></td><td><code>DimCustomer.CustomerBK</code></td></tr>
+      <tr><td><code>SupplierBK</code></td><td><code>DimSupplier.SupplierBK</code></td></tr>
+      <tr><td><code>ProductBK</code></td><td><code>DimProduct.ProductBK</code></td></tr>
+      <tr><td><code>DateKey</code></td><td><code>DimDate.DateKey</code></td></tr>
+    </tbody>
+  </table>
+  <p>Se un lookup non trova corrispondenza, il loader usa <code>-1</code> (<em>unknown member</em>).</p>
+
+  <h2>Note</h2>
+  <div class="note">
+    <ul>
+      <li>Assicurati che i membri sconosciuti (<code>-1</code>) esistano nelle dimensioni (già inclusi in <code>construction_dwh_v2.sql</code>).</li>
+      <li>Se sono presenti <code>DimAudit</code>/<code>AuditKey</code>, il loader scrive automaticamente lo stato di audit.</li>
+      <li>Lo schema di destinazione è configurabile con <code>--schema</code>.</li>
+    </ul>
+  </div>
+
+</main>
+
+<footer>Construction DWH · Excel to Warehouse</footer>
+</body>
+</html>
